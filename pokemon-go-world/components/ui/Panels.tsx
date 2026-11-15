@@ -1,17 +1,16 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { ContactShadows, OrbitControls } from "@react-three/drei";
 import type { CaughtMon, Inventory } from "@/lib/types";
 import { typeColor } from "@/lib/game";
 import { spriteUrl } from "@/lib/models";
 import { useGame, SPIN_RADIUS } from "@/lib/store";
-import { isWatchman, speciesOrWatchman } from "@/lib/watchman";
+import { isCritter, speciesOf } from "@/lib/critters";
 import { distanceMeters } from "@/lib/game";
 import { capturePointer } from "@/lib/pointer";
-import PokemonModel from "../three/PokemonModel";
-import WoodenWatchman, { WatchmanPlaceholder } from "../three/WoodenWatchman";
+import CritterModel from "../three/CritterModel";
 
 export function MainMenu() {
   const setScreen = useGame((s) => s.setScreen);
@@ -27,6 +26,10 @@ export function MainMenu() {
         <button className="menu-item" onClick={() => useGame.getState().openTraining(null)}>
           <span className="mi-ico mi-training" />
           Train
+        </button>
+        <button className="menu-item" onClick={() => useGame.getState().enterArena()}>
+          <span className="mi-ico mi-battle" />
+          Battle
         </button>
         <button
           className="menu-item"
@@ -67,16 +70,17 @@ export function Bag() {
   const [sort, setSort] = useState<"recent" | "cp" | "dex">("recent");
   const [detail, setDetail] = useState<string | null>(null);
   const { trainer, inventory, caught } = save;
-  const uniqueDex = new Set(caught.map((c) => c.dex)).size;
+  const roster = useMemo(() => caught.filter((c) => isCritter(c)), [caught]);
+  const uniqueDex = new Set(roster.map((c) => c.dex)).size;
 
   const sorted = useMemo(() => {
-    const arr = [...caught];
+    const arr = [...roster];
     if (sort === "cp") arr.sort((a, b) => b.cp - a.cp);
     else if (sort === "dex") arr.sort((a, b) => a.dex - b.dex || b.cp - a.cp);
     return arr;
-  }, [caught, sort]);
+  }, [roster, sort]);
 
-  const detailMon = caught.find((c) => c.id === detail);
+  const detailMon = roster.find((c) => c.id === detail);
 
   return (
     <div className="panel">
@@ -84,14 +88,14 @@ export function Bag() {
         <div>
           <h2>Trainer · Level {trainer.level}</h2>
           <div className="panel-stats">
-            {caught.length} Pokémon · {uniqueDex} species · {trainer.totalSpins} spins ·{" "}
+            {roster.length} caught · {uniqueDex} characters · {trainer.totalSpins} spins ·{" "}
             {(trainer.distanceWalked / 1000).toFixed(2)} km walked · {trainer.stardust.toLocaleString()} Stardust
           </div>
         </div>
       </div>
       <div className="tabs">
         <button className={tab === "mons" ? "on" : ""} onClick={() => setTab("mons")}>
-          Pokémon {caught.length}
+          Caught {roster.length}
         </button>
         <button className={tab === "items" ? "on" : ""} onClick={() => setTab("items")}>
           Items
@@ -100,9 +104,9 @@ export function Bag() {
 
       {tab === "items" ? (
         <ItemList inventory={inventory} stardust={trainer.stardust} />
-      ) : caught.length === 0 ? (
+      ) : roster.length === 0 ? (
         <p className="panel-empty">
-          No Pokémon yet. Walk toward the Pokémon on the map. When you get close, the catch screen opens on its own.
+          Nothing caught yet. Walk up to a character on the map and the catch screen opens on its own.
         </p>
       ) : (
         <>
@@ -174,7 +178,7 @@ function MonDetail({ mon, onClose }: { mon: CaughtMon; onClose: () => void }) {
   const stardust = useGame((s) => s.save.trainer.stardust);
   const powerUp = useGame((s) => s.powerUp);
   const transfer = useGame((s) => s.transfer);
-  const base = speciesOrWatchman(pokedex, mon.dex);
+  const base = speciesOf(pokedex, mon.dex);
   if (!base) return null;
   const cost = 200 + mon.level * 25;
   const t2 = base.type2 && base.type2 !== "none" ? base.type2 : null;
@@ -184,13 +188,7 @@ function MonDetail({ mon, onClose }: { mon: CaughtMon; onClose: () => void }) {
         <Canvas shadows="percentage" camera={{ position: [0, 1.4, 4.6], fov: 40 }} dpr={[1, 2]}>
           <hemisphereLight args={["#ffffff", "#8fc9a8", 1.4]} />
           <directionalLight position={[3, 6, 4]} intensity={2.2} castShadow />
-          <Suspense fallback={isWatchman(base) ? <WatchmanPlaceholder height={1.7} /> : null}>
-            {isWatchman(base) ? (
-              <WoodenWatchman height={1.7} castShadow />
-            ) : (
-              <PokemonModel pokemon={base} height={1.7} />
-            )}
-          </Suspense>
+          <CritterModel pokemon={base} height={1.7} castShadow clip="dancing" />
           <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]}>
             <circleGeometry args={[1.4, 64]} />
             <meshBasicMaterial color="#ffffff" transparent opacity={0.9} />
@@ -206,7 +204,7 @@ function MonDetail({ mon, onClose }: { mon: CaughtMon; onClose: () => void }) {
       <div className="md-body">
         <h2>{mon.name}</h2>
         <div className="md-dex">
-          {isWatchman(base) ? "Wood" : `#${String(mon.dex).padStart(3, "0")}`} · Level {mon.level}
+          {base.name} · Level {mon.level}
         </div>
         <div className="enc-types">
           <span style={{ background: typeColor(base.type1) }}>{base.type1}</span>

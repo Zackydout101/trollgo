@@ -1,13 +1,13 @@
 "use client";
 
-import { Suspense, useCallback, useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { ContactShadows } from "@react-three/drei";
 import * as THREE from "three";
 import type { Spawn, ThrowBonus } from "@/lib/types";
-import { isWatchman } from "@/lib/watchman";
-import PokemonModel, { type ModelInfo } from "../three/PokemonModel";
-import WoodenWatchman, { WatchmanPlaceholder } from "../three/WoodenWatchman";
+import type { CritterClip } from "@/lib/critters";
+import { type ModelInfo } from "../three/PokemonModel";
+import CritterModel from "../three/CritterModel";
 import SkibidiToilet, { type SkibidiHandle } from "./SkibidiToilet";
 import { Scenery, type Biome, type BiomeStyle } from "./Scenery";
 
@@ -90,11 +90,25 @@ export default function CatchScene(props: Props) {
     shakeIdx: 0,
     bounced: 0,
     fleeChecked: false,
+    brokeOut: false,
   });
 
+  // Waiting is the dance. A throw switches to the attack. Breaking out keeps a third clip up.
+  const [clip, setClip] = useState<CritterClip>("dancing");
+
   const setMode = (m: Mode) => {
-    sim.current.mode = m;
-    sim.current.t = 0;
+    const s = sim.current;
+    if (m === "burst" || m === "flee") s.brokeOut = true;
+    if (m === "fly") s.brokeOut = false;
+    s.mode = m;
+    s.t = 0;
+    const next: CritterClip =
+      m === "fly" || m === "absorb" || m === "drop" || m === "shake"
+        ? "attacking"
+        : s.brokeOut
+          ? "walking"
+          : "dancing";
+    setClip((cur) => (cur === next ? cur : next));
   };
   const tmp = useMemo(
     () => ({
@@ -227,6 +241,7 @@ export default function CatchScene(props: Props) {
         if (s.t > 1.8 || s.pos.z < -12) {
           cb.current.onMiss();
           s.pos.copy(rest).y -= 0.5;
+          s.brokeOut = true;
           setMode("ready");
         }
         break;
@@ -440,13 +455,7 @@ export default function CatchScene(props: Props) {
 
       <group ref={monGroup} scale={0.0001}>
         <group ref={monInner}>
-          {isWatchman(spawn.pokemon) ? (
-            <Suspense fallback={<WatchmanPlaceholder height={height} />}>
-              <WoodenWatchman height={height} castShadow onReady={onReady} />
-            </Suspense>
-          ) : (
-            <PokemonModel pokemon={spawn.pokemon} height={height} onReady={onReady} />
-          )}
+          <CritterModel pokemon={spawn.pokemon} height={height} castShadow clip={clip} onReady={onReady} />
         </group>
         {razz && <RazzHearts height={height} />}
       </group>

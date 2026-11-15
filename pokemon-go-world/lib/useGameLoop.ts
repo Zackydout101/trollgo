@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import type { LatLng, Pokemon } from "./types";
+import type { LatLng } from "./types";
+import { CRITTERS } from "./critters";
 import { distanceMeters, offsetMeters, randomStops } from "./game";
 import { emptyGpsGate, gateGpsFix, type GpsGate } from "./gps";
 import { loadModelManifest } from "./models";
@@ -51,7 +52,7 @@ export function applyGpsFix(
   useGame.getState().setGeoStatus("gps");
   if (d > 3) {
     useGame.getState().setPos(decision.pos, { moving: false });
-    if (d > 250) useGame.getState().seedSpawns(7);
+    if (d > 250) useGame.getState().seedSpawns(CRITTERS.length);
   }
   return true;
 }
@@ -61,16 +62,13 @@ export function useGameLoop() {
 
   // data
   useEffect(() => {
-    Promise.all([
-      fetch("/data/pokemon.json").then((r) => r.json() as Promise<Pokemon[]>),
-      loadModelManifest(),
-    ])
-      .then(([dex]) => {
-        useGame.getState().setPokedex(dex);
-        useGame.getState().seedSpawns(7);
+    loadModelManifest()
+      .then(() => {
+        useGame.getState().setPokedex(CRITTERS);
+        useGame.getState().seedSpawns(CRITTERS.length);
         ready.current = true;
       })
-      .catch(() => useGame.getState().flash("Couldn't load Pokémon data."));
+      .catch(() => useGame.getState().flash("Couldn't load the characters."));
   }, []);
 
   // geolocation

@@ -72,10 +72,26 @@ function paintWood(root: THREE.Object3D) {
   woodPainted = true;
 }
 
+/** Which baked Mixamo clip the watchman should loop. */
+export type WatchmanClip = "walking" | "dancing" | "attacking";
+
+/**
+ * The "All_animation" export bundles every Mixamo clip on one skeleton, so a single
+ * download can play whichever state the game needs. These are the clip names baked
+ * into that file; we fall back gracefully if an export is missing one.
+ */
+const CLIP_NAMES: Record<WatchmanClip, string[]> = {
+  walking: ["Walking", "Running", "Run_03", "RunFast"],
+  dancing: ["Hip_Hop_Dance_3", "Arm_Circle_Shuffle", "_360_Power_Spin_Jump"],
+  attacking: ["Attack", "Boxing_Practice", "Punch_Combo"],
+};
+
 interface Props {
   /** Target height in world units. */
   height: number;
   castShadow?: boolean;
+  /** Which animation to loop: walking on the map, dancing in the catch scene, attacking in the arena. */
+  clip?: WatchmanClip;
   onReady?: (info: ModelInfo) => void;
 }
 
@@ -92,7 +108,7 @@ export function WatchmanPlaceholder({ height }: { height: number }) {
  * Wooden Watchman playing its Mixamo attack clip. The source model is untextured,
  * so the mesh is stained with varied brown wood grain.
  */
-export default function WoodenWatchman({ height, castShadow = false, onReady }: Props) {
+export default function WoodenWatchman({ height, castShadow = false, clip = "walking", onReady }: Props) {
   const gltf = useGLTF(WATCHMAN_URL);
   const root = useRef<THREE.Object3D>(null);
 
@@ -127,15 +143,17 @@ export default function WoodenWatchman({ height, castShadow = false, onReady }: 
   }, [info, onReady]);
 
   useEffect(() => {
-    const name = names.find((n) => n === "Attack") ?? names[0];
+    const wanted = CLIP_NAMES[clip];
+    const name = wanted.find((w) => names.includes(w)) ?? names[0];
     const action = name ? actions[name] : undefined;
     if (!action) return;
     action.reset().setLoop(THREE.LoopRepeat, Infinity).fadeIn(0.25).play();
+    // stagger start time so a crowd of watchmen doesn't move in lockstep
     action.time = Math.random() * (action.getClip().duration || 1);
     return () => {
       action.fadeOut(0.15);
     };
-  }, [actions, names]);
+  }, [actions, names, clip]);
 
   return (
     <group scale={scale}>

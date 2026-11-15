@@ -22,6 +22,8 @@ export default function Hud() {
 function TopBar() {
   const geo = useGame((s) => s.geoStatus);
   const incenseUntil = useGame((s) => s.incenseUntil);
+  const muted = useGame((s) => s.musicMuted);
+  const toggleMusic = useGame((s) => s.toggleMusic);
   const [, tick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => tick((n) => n + 1), 1000);
@@ -32,6 +34,15 @@ function TopBar() {
   return (
     <div className="top-right">
       <Compass />
+      <button
+        className={`round-btn music ${muted ? "muted" : ""}`}
+        title={muted ? "Unmute music" : "Mute music"}
+        aria-label={muted ? "Unmute music" : "Mute music"}
+        aria-pressed={muted}
+        onClick={toggleMusic}
+      >
+        {muted ? <SpeakerOff /> : <SpeakerOn />}
+      </button>
       <button
         className={`round-btn gps ${geo}`}
         title={geo === "gps" ? "Following your GPS location" : "Use my real GPS location"}
@@ -57,6 +68,25 @@ function TopBar() {
         </div>
       )}
     </div>
+  );
+}
+
+function SpeakerOn() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden>
+      <path d="M4 9v6h4l5 4V5L8 9H4z" />
+      <path d="M16.2 8.8a4.5 4.5 0 0 1 0 6.4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M18.6 6.4a8 8 0 0 1 0 11.2" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function SpeakerOff() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden>
+      <path d="M4 9v6h4l5 4V5L8 9H4z" />
+      <path d="M17 9.5 22 14.5M22 9.5 17 14.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
   );
 }
 
@@ -94,17 +124,42 @@ function TrainerBadge() {
   const pct = Math.min(1, (xp - base) / (next - base));
   const C = 2 * Math.PI * 30;
   return (
-    <button className="trainer-badge" onClick={() => setScreen("bag")} title="Trainer profile">
+    <button className="trainer-badge" onClick={() => setScreen("bag")} title="SpongeBob" aria-label="SpongeBob">
       <svg viewBox="0 0 68 68" className="xp-ring">
         <circle cx="34" cy="34" r="30" className="track" />
         <circle cx="34" cy="34" r="30" className="fill" strokeDasharray={`${C * pct} ${C}`} />
       </svg>
       <div className="trainer-face">
-        <div className="cap" />
-        <div className="face" />
+        <SpongeBobEmoji />
       </div>
       <div className="lvl-tag">{level}</div>
     </button>
+  );
+}
+
+function SpongeBobEmoji() {
+  return (
+    <svg viewBox="0 0 64 64" className="sb-emoji" aria-hidden>
+      <rect x="8" y="44" width="48" height="16" rx="3" fill="#6b3a12" />
+      <rect x="8" y="44" width="48" height="4" fill="#fff" />
+      <path d="M32 44 l3.2 2.2 -3.2 7 -3.2-7 z" fill="#e23b3b" />
+      <rect x="11" y="6" width="42" height="40" rx="9" fill="#ffe14a" />
+      <circle cx="18" cy="16" r="1.3" fill="#c9a227" />
+      <circle cx="46" cy="14" r="1.2" fill="#c9a227" />
+      <circle cx="20" cy="38" r="1.15" fill="#c9a227" />
+      <circle cx="45" cy="36" r="1.25" fill="#c9a227" />
+      <ellipse cx="24" cy="22" rx="8" ry="9" fill="#fff" />
+      <ellipse cx="40" cy="22" rx="8" ry="9" fill="#fff" />
+      <circle cx="26" cy="23" r="3.1" fill="#3aa0ff" />
+      <circle cx="42" cy="23" r="3.1" fill="#3aa0ff" />
+      <circle cx="26.7" cy="23.2" r="1.45" fill="#1a1a1a" />
+      <circle cx="42.7" cy="23.2" r="1.45" fill="#1a1a1a" />
+      <path d="M17 15.5 15.2 11.5M24 14.2 V10.2M31 15.5 32.8 11.5" stroke="#1a1a1a" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M32.2 15.5 30.4 11.5M40 14.2 V10.2M47 15.5 48.8 11.5" stroke="#1a1a1a" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M24 34 q8 8 16 0" fill="none" stroke="#1a1a1a" strokeWidth="1.7" strokeLinecap="round" />
+      <rect x="28.2" y="33.2" width="3.3" height="5.2" rx="0.6" fill="#fff" stroke="#1a1a1a" strokeWidth="0.7" />
+      <rect x="32.5" y="33.2" width="3.3" height="5.2" rx="0.6" fill="#fff" stroke="#1a1a1a" strokeWidth="0.7" />
+    </svg>
   );
 }
 

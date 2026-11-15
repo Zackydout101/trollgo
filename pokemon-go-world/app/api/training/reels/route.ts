@@ -4,7 +4,6 @@ import { reels } from "../catalog";
 export function GET() {
   return Response.json({
     reels: reels(),
-    blockSec: 15,
-    note: "Stay in a session. Points per second climb every 15 seconds, with no cap.",
+    note: "Scroll the feed. Every reel you scroll to is worth more points than the last, with no cap. The feed loops forever.",
   });
 }

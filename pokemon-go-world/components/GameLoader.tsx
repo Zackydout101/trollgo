@@ -11,7 +11,7 @@ export function Splash({ text = "Loading…" }: { text?: string }) {
   return (
     <div className="splash">
       <div className="splash-ball" />
-      <div className="splash-title">Pokémon GO World</div>
+      <div className="splash-title">SkibidiGo</div>
       <div className="splash-sub">{text}</div>
     </div>
   );

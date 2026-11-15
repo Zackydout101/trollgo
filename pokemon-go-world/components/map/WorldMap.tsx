@@ -9,21 +9,19 @@ import * as THREE from "three";
 import type { LatLng, Spawn } from "@/lib/types";
 import { distanceMeters } from "@/lib/game";
 import { isNight, pogoStyle } from "@/lib/mapStyle";
-import { modelSize } from "@/lib/models";
 import { stopsFromMap } from "@/lib/poiStops";
-import { SPIN_RADIUS, TAP_RADIUS, useGame, view } from "@/lib/store";
+import { ARENA_RADIUS, SPIN_RADIUS, TAP_RADIUS, useGame, view } from "@/lib/store";
 import { isWatchman } from "@/lib/watchman";
-import PokemonModel from "../three/PokemonModel";
-import WoodenWatchman, { WatchmanPlaceholder } from "../three/WoodenWatchman";
+import CritterModel from "../three/CritterModel";
 import PokeStop3D from "./PokeStop3D";
-import { PlayerRings, TrainerModel, useWalkBlend } from "./Avatar";
+import ArenaSpot3D from "./ArenaSpot3D";
+import { PlayerRings, useWalkBlend } from "./Avatar";
+import SpongeBob from "../three/SpongeBob";
 
 /** Map objects are drawn larger than life so they read well from the GO camera, like the real game. */
 const AVATAR_SCALE = 5.5;
 const STOP_SCALE = 4.8;
 const MON_HEIGHT = 9;
-/** Models bigger than this are shown as sprites on the map to keep the overworld light. */
-const MAP_MODEL_MAX_BYTES = 6_000_000;
 const REANCHOR_DISTANCE = 1500;
 
 const toCoords = (p: LatLng) => ({ latitude: p.lat, longitude: p.lng });
@@ -146,6 +144,7 @@ export default function WorldMap() {
           <Player anchor={anchor} />
           <Spawns anchor={anchor} />
           <Stops anchor={anchor} />
+          <Arenas anchor={anchor} />
         </Canvas>
       </Map>
     </div>
@@ -175,7 +174,9 @@ function Player({ anchor }: { anchor: LatLng }) {
         <meshBasicMaterial color="#000" transparent opacity={0.22} depthWrite={false} />
       </mesh>
       <group ref={body} scale={AVATAR_SCALE}>
-        <TrainerModel walkRef={walk} />
+        <Suspense fallback={null}>
+          <SpongeBob walkRef={walk} />
+        </Suspense>
       </group>
     </group>
   );
@@ -197,9 +198,9 @@ const MapPokemon = memo(function MapPokemon({ spawn, anchor }: { spawn: Spawn; a
   const ref = useRef<THREE.Group>(null);
   const born = useRef(performance.now());
   const pos = useMemo(() => coordsToVector3(toCoords(spawn.pos), toCoords(anchor)), [spawn.pos, anchor]);
-  const watchman = isWatchman(spawn.pokemon);
-  const height = watchman ? MON_HEIGHT * 1.45 : MON_HEIGHT * (0.75 + Math.min(1, spawn.pokemon.bst / 700) * 0.6);
-  const sprite = modelSize(spawn.pokemon.dex) > MAP_MODEL_MAX_BYTES;
+  const height = isWatchman(spawn.pokemon)
+    ? MON_HEIGHT * 1.45
+    : MON_HEIGHT * (0.8 + Math.min(1, spawn.pokemon.bst / 700) * 0.55);
 
   useFrame(() => {
     if (!ref.current) return;
@@ -225,13 +226,7 @@ const MapPokemon = memo(function MapPokemon({ spawn, anchor }: { spawn: Spawn; a
         <meshBasicMaterial color="#000" transparent opacity={0.2} depthWrite={false} />
       </mesh>
       <group ref={ref} onClick={click}>
-        {watchman ? (
-          <Suspense fallback={<WatchmanPlaceholder height={height} />}>
-            <WoodenWatchman height={height} />
-          </Suspense>
-        ) : (
-          <PokemonModel pokemon={spawn.pokemon} height={height} forceSprite={sprite} castShadow={false} />
-        )}
+        <CritterModel pokemon={spawn.pokemon} height={height} clip="walking" />
       </group>
     </group>
   );
@@ -263,6 +258,50 @@ function Stops({ anchor }: { anchor: LatLng }) {
             near={nearIds.current.has(s.id)}
             scale={STOP_SCALE}
             onSelect={() => useGame.getState().openStop(s.id)}
+          />
+        </group>
+      ))}
+    </>
+  );
+}
+
+function Arenas({ anchor }: { anchor: LatLng }) {
+  const arenaSpots = useGame((s) => s.arenaSpots);
+  const [, force] = useState(0);
+  const nearIds = useRef<Set<string>>(new Set());
+
+  // re-render when the trainer walks in/out of an arena's range
+  useEffect(() => {
+    const id = setInterval(() => {
+      const { pos, arenaSpots } = useGame.getState();
+      const next = new Set(
+        arenaSpots.filter((a) => distanceMeters(a.pos, pos) <= ARENA_RADIUS).map((a) => a.id)
+      );
+      const changed = next.size !== nearIds.current.size || [...next].some((i) => !nearIds.current.has(i));
+      nearIds.current = next;
+      if (changed) force((n) => n + 1);
+    }, 500);
+    return () => clearInterval(id);
+  }, []);
+
+  const select = (id: string, bossIndex: number) => {
+    const g = useGame.getState();
+    const spot = g.arenaSpots.find((a) => a.id === id);
+    if (!spot) return;
+    const d = distanceMeters(spot.pos, g.pos);
+    if (d <= ARENA_RADIUS) g.enterArena(bossIndex);
+    else g.flash(`Boss arena is ${Math.round(d)} m away. Walk closer to challenge it!`);
+  };
+
+  return (
+    <>
+      {arenaSpots.map((a) => (
+        <group key={a.id} position={coordsToVector3(toCoords(a.pos), toCoords(anchor))}>
+          <ArenaSpot3D
+            bossIndex={a.bossIndex}
+            near={nearIds.current.has(a.id)}
+            scale={STOP_SCALE}
+            onSelect={() => select(a.id, a.bossIndex)}
           />
         </group>
       ))}

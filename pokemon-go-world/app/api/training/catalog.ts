@@ -56,18 +56,19 @@ export function videoFileAt(index: number): string | null {
   return files[i] ?? files[0];
 }
 
-/** Points speed up every block of time you stay, with no ceiling. */
-const BLOCK = 15;
-const BASE_RATE = 2;
+/**
+ * Doom-scroll rewards: every reel you scroll to is worth more than the last,
+ * so the longer you keep scrolling the faster the points pile up — with no cap.
+ */
+const BASE_VIDEO = 4;
+const STEP = 1;
 
-export function trainingScore(elapsedSec: number) {
-  const seconds = Math.max(0, Math.floor(elapsedSec));
-  const blocks = Math.floor(seconds / BLOCK);
-  const rem = seconds - blocks * BLOCK;
-  let points = 0;
-  for (let i = 0; i < blocks; i++) points += BLOCK * (BASE_RATE + i);
-  points += rem * (BASE_RATE + blocks);
-  const pointsPerSec = BASE_RATE + blocks;
-  const nextRateIn = BLOCK - rem;
-  return { elapsedSec: seconds, points, pointsPerSec, nextRateIn };
+/** Points earned for having scrolled through `watched` reels this session. */
+export function scrollScore(watched: number) {
+  const n = Math.max(0, Math.floor(watched));
+  // sum of BASE, BASE+STEP, BASE+2*STEP, ... for the n reels already watched
+  const points = n * BASE_VIDEO + (STEP * n * (n - 1)) / 2;
+  // what the very next scroll will be worth
+  const nextVideoWorth = BASE_VIDEO + STEP * n;
+  return { watched: n, points, nextVideoWorth };
 }

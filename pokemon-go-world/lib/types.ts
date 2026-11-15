@@ -61,6 +61,14 @@ export interface PokeStop {
   cooldownUntil: number;
 }
 
+/** A battle arena marker on the map where a big boss can be challenged. */
+export interface ArenaSpot {
+  id: string;
+  pos: LatLng;
+  /** index into the BOSSES roster that lives at this arena */
+  bossIndex: number;
+}
+
 export interface Trainer {
   level: number;
   xp: number;

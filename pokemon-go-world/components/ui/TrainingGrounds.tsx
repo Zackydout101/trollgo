@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isCritter } from "@/lib/critters";
 import { spriteUrl } from "@/lib/models";
 import { TRAINING_PER_LEVEL, useGame } from "@/lib/store";
 import type { CaughtMon } from "@/lib/types";
@@ -16,10 +17,9 @@ interface Reel {
 interface Tick {
   sessionId: string;
   monId: string;
-  elapsedSec: number;
+  watched: number;
   points: number;
-  pointsPerSec: number;
-  nextRateIn: number;
+  nextVideoWorth: number;
   error?: string;
 }
 
@@ -41,7 +41,8 @@ async function fetchReels(): Promise<Reel[]> {
 }
 
 export default function TrainingGrounds() {
-  const caught = useGame((s) => s.save.caught);
+  const allCaught = useGame((s) => s.save.caught);
+  const caught = useMemo(() => allCaught.filter((c) => isCritter(c)), [allCaught]);
   const setScreen = useGame((s) => s.setScreen);
   const [monId, setMonId] = useState<string | null>(() => useGame.getState().trainMonId);
   const mon = caught.find((c) => c.id === monId) ?? null;
@@ -85,7 +86,8 @@ function Picker({
       <div className="panel-head">
         <h2>Training Grounds</h2>
         <div className="panel-stats">
-          Pick a Pokémon. {reels.length} brainrot reels play on loop, and staying longer earns points faster.
+          Pick a Pokémon, then doom-scroll {reels.length} brainrot reels. Every reel you scroll to is worth more points than the
+          last — the feed loops forever.
         </div>
       </div>
       {reels.length > 0 && (
@@ -124,26 +126,33 @@ function Picker({
   );
 }
 
-/** One independently-cycling reel pane. Loops to the next video on end. */
-function ReelLane({ reels, start, muted }: { reels: Reel[]; start: number; muted: boolean }) {
-  const [cur, setCur] = useState(() => (reels.length ? start % reels.length : 0));
-  const advance = () => setCur((c) => (reels.length ? (c + 1) % reels.length : 0));
-  const reel = reels[cur];
-  if (!reel) return <div className="reel-lane" />;
+/** One full-screen reel in the vertical feed. Only the active page plays. */
+function ReelPage({ reel, active, near, muted }: { reel: Reel; active: boolean; near: boolean; muted: boolean }) {
+  const ref = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const v = ref.current;
+    if (!v) return;
+    if (active) {
+      v.currentTime = 0;
+      void v.play().catch(() => {});
+    } else {
+      v.pause();
+    }
+  }, [active]);
+
   return (
-    <div className="reel-lane" style={{ background: `linear-gradient(160deg, hsl(${reel.hue} 70% 28%), #060608)` }}>
+    <div className="reel-page" style={{ background: `linear-gradient(160deg, hsl(${reel.hue} 70% 20%), #060608)` }}>
       <video
-        key={reel.id}
-        className="reel-lane-video"
+        ref={ref}
+        className="reel-page-video"
         src={reel.videoUrl}
-        autoPlay
+        loop
         playsInline
         muted={muted}
         controls={false}
-        onEnded={advance}
-        onError={advance}
+        preload={near ? "auto" : "none"}
       />
-      <span className="reel-lane-tag">{reel.title}</span>
     </div>
   );
 }
@@ -152,17 +161,26 @@ function Session({ mon, onBack }: { mon: CaughtMon; onBack: () => void }) {
   const [tick, setTick] = useState<Tick | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
+  const [muted, setMuted] = useState(true);
   const [reels, setReels] = useState<Reel[]>([]);
-  const [lanes, setLanes] = useState(1);
+  // How many pages exist in the (infinitely looping) feed, and which is on screen.
+  const [pages, setPages] = useState(0);
+  const [active, setActive] = useState(0);
+  const feedRef = useRef<HTMLDivElement>(null);
   const sidRef = useRef<string | null>(null);
   const settled = useRef(false);
+  // Highest page index already counted as "watched", so scrolling back up is free.
+  const seenMax = useRef(-1);
 
-  // reels list (one per mp4)
+  // reels list (one per mp4); seed the looping feed once they load
   useEffect(() => {
     let cancel = false;
     fetchReels()
       .then((r) => {
-        if (!cancel) setReels(r);
+        if (!cancel) {
+          setReels(r);
+          setPages(r.length ? r.length * 3 : 0);
+        }
       })
       .catch(() => {});
     return () => {
@@ -170,12 +188,13 @@ function Session({ mon, onBack }: { mon: CaughtMon; onBack: () => void }) {
     };
   }, []);
 
-  // session: start, poll points, bank on unmount
+  // session: start, bank on unmount
   useEffect(() => {
     let cancel = false;
     const monId = mon.id;
     settled.current = false;
     sidRef.current = null;
+    seenMax.current = -1;
 
     const claim = (sessionId: string) => {
       if (settled.current) return Promise.resolve();
@@ -200,23 +219,64 @@ function Session({ mon, onBack }: { mon: CaughtMon; onBack: () => void }) {
         if (!cancel) setError(err instanceof Error ? err.message : "Couldn't open the grounds");
       });
 
-    const poll = setInterval(() => {
-      const sid = sidRef.current;
-      if (!sid || cancel) return;
-      postSession({ action: "tick", sessionId: sid })
-        .then((next) => {
-          if (!cancel) setTick(next);
-        })
-        .catch(() => {});
-    }, 1000);
-
     return () => {
       cancel = true;
-      clearInterval(poll);
       const sid = sidRef.current;
       if (sid) void claim(sid);
     };
   }, [mon.id]);
+
+  // Each new reel scrolled to (a new high-water page) banks another watch.
+  const sessionId = tick?.sessionId;
+  useEffect(() => {
+    const sid = sessionId;
+    if (!sid || reels.length === 0) return;
+    if (active <= seenMax.current) return;
+    const fresh = active - seenMax.current;
+    seenMax.current = active;
+    let last: Tick | null = null;
+    const run = async () => {
+      for (let i = 0; i < fresh; i++) {
+        try {
+          last = await postSession({ action: "watch", sessionId: sid });
+        } catch {
+          return;
+        }
+      }
+      if (last) setTick(last);
+    };
+    void run();
+  }, [active, reels.length, sessionId]);
+
+  const goTo = useCallback((idx: number) => {
+    const el = feedRef.current;
+    if (!el) return;
+    el.scrollTo({ top: Math.max(0, idx) * el.clientHeight, behavior: "smooth" });
+  }, []);
+
+  // Arrow keys / PageUp / PageDown flip reels (the map's key handler swallows native arrow scrolling).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowDown" || e.key === "PageDown" || e.key === " ") {
+        e.preventDefault();
+        goTo(active + 1);
+      } else if (e.key === "ArrowUp" || e.key === "PageUp") {
+        e.preventDefault();
+        goTo(active - 1);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [active, goTo]);
+
+  // Track which page is on screen; keep the loop stocked with more pages below.
+  const onScroll = useCallback(() => {
+    const el = feedRef.current;
+    if (!el || el.clientHeight === 0) return;
+    const idx = Math.round(el.scrollTop / el.clientHeight);
+    setActive((cur) => (idx === cur ? cur : idx));
+    if (reels.length && idx >= pages - 2) setPages((p) => p + reels.length);
+  }, [pages, reels.length]);
 
   const leave = async () => {
     if (leaving) return;
@@ -239,18 +299,29 @@ function Session({ mon, onBack }: { mon: CaughtMon; onBack: () => void }) {
   const total = banked + live;
   const toward = total % TRAINING_PER_LEVEL;
   const levelsReady = Math.floor(total / TRAINING_PER_LEVEL) - Math.floor(banked / TRAINING_PER_LEVEL);
-  const maxLanes = Math.max(1, Math.min(4, reels.length || 1));
-  const shown = Math.min(lanes, maxLanes);
-  const cols = shown <= 1 ? 1 : 2;
 
   return (
     <div className="train-reel-full">
-      <div className="reel-grid" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}>
+      <div className="reel-feed" ref={feedRef} onScroll={onScroll}>
         {reels.length > 0 &&
-          Array.from({ length: shown }, (_, i) => (
-            <ReelLane key={i} reels={reels} start={i} muted={i > 0} />
-          ))}
+          Array.from({ length: pages }, (_, p) => {
+            const reel = reels[p % reels.length];
+            return (
+              <ReelPage key={p} reel={reel} active={p === active} near={Math.abs(p - active) <= 1} muted={muted} />
+            );
+          })}
       </div>
+
+      {reels.length > 0 && (
+        <div className="reel-nav">
+          <button onClick={() => goTo(active - 1)} disabled={active === 0} aria-label="Previous reel">
+            ▲
+          </button>
+          <button onClick={() => goTo(active + 1)} aria-label="Next reel">
+            ▼
+          </button>
+        </div>
+      )}
 
       <div className="reel-top">
         <img src={spriteUrl(mon.sprite)} alt="" />
@@ -260,15 +331,9 @@ function Session({ mon, onBack }: { mon: CaughtMon; onBack: () => void }) {
             Lv {mon.level} · CP {mon.cp}
           </span>
         </div>
-        <div className="reel-lanes-ctrl">
-          <button onClick={() => setLanes((n) => Math.max(1, n - 1))} disabled={shown <= 1} aria-label="Fewer reels">
-            −
-          </button>
-          <span>{shown}</span>
-          <button onClick={() => setLanes((n) => Math.min(maxLanes, n + 1))} disabled={shown >= maxLanes} aria-label="Add a reel">
-            ＋
-          </button>
-        </div>
+        <button className="reel-mute" onClick={() => setMuted((m) => !m)} aria-label={muted ? "Unmute" : "Mute"}>
+          {muted ? "🔇" : "🔊"}
+        </button>
         <button className="pill-btn" onClick={leave} disabled={leaving}>
           {leaving ? "Saving…" : "Leave"}
         </button>
@@ -279,26 +344,24 @@ function Session({ mon, onBack }: { mon: CaughtMon; onBack: () => void }) {
 
       <div className="reel-bottom">
         <div className="reel-caption">
-          <span className="reel-badge">
-            {shown === 1 ? "1 reel" : `${shown} reels`}
-          </span>
-          <b>Tap ＋ to stack more reels on screen</b>
+          <span className="reel-badge">Reel {active + 1}</span>
+          <b>🎬 {reels.length ? reels[active % reels.length].title : ""}</b>
         </div>
 
         {tick && (
           <>
             <div className="train-score dark">
               <div>
-                <b>{formatStay(tick.elapsedSec)}</b>
-                <span>stayed</span>
+                <b>{tick.watched}</b>
+                <span>reels watched</span>
               </div>
               <div>
                 <b>{tick.points}</b>
                 <span>points</span>
               </div>
               <div>
-                <b>{tick.pointsPerSec}/s</b>
-                <span>faster in {tick.nextRateIn}s</span>
+                <b>+{tick.nextVideoWorth}</b>
+                <span>next scroll</span>
               </div>
             </div>
             <div className="train-bar">
@@ -306,17 +369,12 @@ function Session({ mon, onBack }: { mon: CaughtMon; onBack: () => void }) {
             </div>
             <p className="reel-progress">
               {toward}/{TRAINING_PER_LEVEL} to the next level.
-              {levelsReady > 0 ? ` ${levelsReady} level${levelsReady === 1 ? "" : "s"} ready when you leave.` : ""} Keep watching — each
-              second is worth more.
+              {levelsReady > 0 ? ` ${levelsReady} level${levelsReady === 1 ? "" : "s"} ready when you leave.` : ""} Scroll, swipe, or
+              press ▼ for the next reel — every one is worth more than the last.
             </p>
           </>
         )}
       </div>
     </div>
   );
-}
-
-function formatStay(seconds: number) {
-  const s = Math.max(0, Math.floor(seconds));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }

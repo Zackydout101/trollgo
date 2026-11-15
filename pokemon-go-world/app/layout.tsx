@@ -6,8 +6,8 @@ import "./globals.css";
 const lato = Lato({ subsets: ["latin"], weight: ["400", "700", "900"], variable: "--font-lato" });
 
 export const metadata: Metadata = {
-  title: "Pokémon GO World",
-  description: "Walk the real world, find Pokémon in 3D and catch them.",
+  title: "SkibidiGo",
+  description: "SkibidiGo — walk the real world, find creatures in 3D, and catch them.",
 };
 
 export const viewport: Viewport = {

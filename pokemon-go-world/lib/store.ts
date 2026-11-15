@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import type {
+  ArenaSpot,
   BallType,
   CaughtMon,
   Inventory,
@@ -12,17 +13,17 @@ import type {
   Spawn,
   ThrowBonus,
 } from "./types";
+import { BOSSES } from "./bosses";
 import {
   BONUS_XP,
   cpAtLevel,
   distanceMeters,
   levelFromXp,
-  pickWild,
   randomPointAround,
   rollWild,
   XP,
 } from "./game";
-import { isWatchman, speciesOrWatchman, WOODEN_WATCHMAN, WATCHMAN_CHANCE } from "./watchman";
+import { CRITTERS, speciesOf } from "./critters";
 
 // --- tuning ---------------------------------------------------------------
 export const MAX_SPAWNS = 12;
@@ -36,7 +37,16 @@ export const AUTO_ENCOUNTER_RADIUS = 25;
 export const TAP_RADIUS = 45;
 export const SPIN_RADIUS = 45;
 export const SPIN_COOLDOWN_MS = 5 * 60_000;
-export const WALK_SPEED = 7;
+/** How many boss arenas to keep scattered around the trainer. */
+export const ARENA_SPOTS = 3;
+/** Minimum / maximum distance a boss arena spawns from the trainer. */
+export const ARENA_MIN_R = 60;
+export const ARENA_MAX_R = 180;
+/** Tapping / walking within this radius of an arena starts the boss battle. */
+export const ARENA_RADIUS = 50;
+/** Arenas further than this from the trainer are recycled. */
+export const ARENA_DESPAWN_DISTANCE = 320;
+export const WALK_SPEED = 14;
 export const DEFAULT_POS: LatLng = { lat: 40.7829, lng: -73.9654 };
 
 /** Joystick / keyboard input, x = right, y = forward (relative to the camera). Mutated every frame. */
@@ -44,7 +54,7 @@ export const input = { x: 0, y: 0 };
 /** Current map bearing in degrees, mirrored from MapLibre so walking follows the camera. */
 export const view = { bearing: 0 };
 
-export type Screen = "map" | "bag" | "menu" | "training";
+export type Screen = "map" | "bag" | "menu" | "training" | "arena";
 
 /** Training-ground points required for one level. */
 export const TRAINING_PER_LEVEL = 80;
@@ -68,6 +78,10 @@ interface GameState {
   stops: PokeStop[];
   save: SaveState;
   incenseUntil: number;
+  /** Boss battle arenas scattered on the map. */
+  arenaSpots: ArenaSpot[];
+  /** Which boss the open arena should fight; null = show the boss picker. */
+  arenaBoss: number | null;
   encounter: Spawn | null;
   /** spawn ids the player ran from; they won't auto-trigger again */
   dismissed: Record<string, true>;
@@ -76,6 +90,8 @@ interface GameState {
   trainMonId: string | null;
   spinStopId: string | null;
   toast: { id: number; text: string } | null;
+  /** Hunt music stays off until this is cleared. */
+  musicMuted: boolean;
 
   setPokedex: (p: Pokemon[]) => void;
   setPos: (p: LatLng, opts?: { heading?: number; moving?: boolean }) => void;
@@ -85,11 +101,20 @@ interface GameState {
   /** Open the training grounds, optionally straight onto one caught Pokémon. */
   openTraining: (monId?: string | null) => void;
   flash: (text: string) => void;
+  toggleMusic: () => void;
   addXp: (amount: number) => void;
+  /** Grant battle/arena spoils in one shot: XP, Stardust and bag items. */
+  grantSpoils: (spoils: { xp?: number; stardust?: number; items?: Partial<Inventory> }) => void;
 
   spawnTick: () => void;
   cleanupTick: () => void;
   seedSpawns: (n: number) => void;
+  /** Make sure there are boss arenas near the trainer, recycling stale ones. */
+  ensureArenaSpots: () => void;
+  /** Open the arena to fight one boss (from a map spot), or the picker when omitted. */
+  enterArena: (bossIndex?: number) => void;
+  /** Close the arena and clear the pending boss. */
+  leaveArena: () => void;
 
   startEncounter: (s: Spawn) => void;
   runAway: () => void;
@@ -124,6 +149,16 @@ const DEFAULT_SAVE: SaveState = {
 };
 
 const STORAGE_KEY = "pogo-world-save-v3";
+const MUSIC_KEY = "pogo-world-music-muted";
+
+function loadMusicMuted(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return localStorage.getItem(MUSIC_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 function loadSave(): SaveState {
   if (typeof window === "undefined") return DEFAULT_SAVE;
@@ -142,8 +177,7 @@ function loadSave(): SaveState {
   }
 }
 
-function makeSpawn(pool: Pokemon[], pos: LatLng, trainerLevel: number): Spawn {
-  const mon = Math.random() < WATCHMAN_CHANCE ? WOODEN_WATCHMAN : pickWild(pool);
+function makeSpawn(pos: LatLng, trainerLevel: number, mon: Pokemon = CRITTERS[Math.floor(Math.random() * CRITTERS.length)]): Spawn {
   const { level, cp } = rollWild(mon, trainerLevel);
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -167,12 +201,15 @@ export const useGame = create<GameState>((set, get) => ({
   stops: [],
   save: loadSave(),
   incenseUntil: 0,
+  arenaSpots: [],
+  arenaBoss: null,
   encounter: null,
   dismissed: {},
   screen: "map",
   trainMonId: null,
   spinStopId: null,
   toast: null,
+  musicMuted: loadMusicMuted(),
 
   setPokedex: (pokedex) => set({ pokedex }),
 
@@ -201,6 +238,16 @@ export const useGame = create<GameState>((set, get) => ({
 
   flash: (text) => set({ toast: { id: ++toastId, text } }),
 
+  toggleMusic: () => {
+    const musicMuted = !get().musicMuted;
+    set({ musicMuted });
+    try {
+      localStorage.setItem(MUSIC_KEY, musicMuted ? "1" : "0");
+    } catch {
+      /* storage blocked */
+    }
+  },
+
   addXp: (amount) => {
     const s = get().save;
     const xp = s.trainer.xp + amount;
@@ -220,27 +267,60 @@ export const useGame = create<GameState>((set, get) => ({
     set({ save: { ...s, inventory, trainer: { ...s.trainer, xp, level } } });
   },
 
-  seedSpawns: (n) => {
-    const { pokedex, pos, save } = get();
-    if (!pokedex.length) return;
-    const spawns = Array.from({ length: n }, () => makeSpawn(pokedex, pos, save.trainer.level));
-    // Always drop a couple of watchmen in the opening set so they show up on the map.
-    let watchers = spawns.filter((s) => isWatchman(s.pokemon)).length;
-    for (let i = 0; watchers < 2 && i < spawns.length; i++) {
-      if (isWatchman(spawns[i].pokemon)) continue;
-      const rolled = rollWild(WOODEN_WATCHMAN, save.trainer.level);
-      spawns[i] = { ...spawns[i], pokemon: WOODEN_WATCHMAN, level: rolled.level, cp: rolled.cp };
-      watchers++;
-    }
-    set({ spawns });
+  grantSpoils: ({ xp = 0, stardust = 0, items }) => {
+    const s = get().save;
+    set({
+      save: {
+        ...s,
+        inventory: items ? mergeInv(s.inventory, items) : s.inventory,
+        trainer: { ...s.trainer, stardust: s.trainer.stardust + stardust },
+      },
+    });
+    if (xp > 0) get().addXp(xp);
   },
 
+  seedSpawns: (n) => {
+    const { pos, save } = get();
+    // One of each animated character, then fill the rest at random. No Pokémon.
+    const spawns = CRITTERS.slice(0, n).map((mon) => makeSpawn(pos, save.trainer.level, mon));
+    while (spawns.length < n) spawns.push(makeSpawn(pos, save.trainer.level));
+    set({ spawns });
+    get().ensureArenaSpots();
+  },
+
+  ensureArenaSpots: () => {
+    const { pos, arenaSpots } = get();
+    // drop arenas the trainer has wandered away from
+    const kept = arenaSpots.filter((a) => distanceMeters(a.pos, pos) < ARENA_DESPAWN_DISTANCE);
+    if (kept.length >= ARENA_SPOTS) {
+      if (kept.length !== arenaSpots.length) set({ arenaSpots: kept });
+      return;
+    }
+    const next = [...kept];
+    while (next.length < ARENA_SPOTS) {
+      next.push({
+        id: `arena-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        pos: randomPointAround(pos, ARENA_MIN_R, ARENA_MAX_R),
+        // Spread bosses across tiers so every map has an easy and a hard arena.
+        bossIndex: Math.floor(Math.random() * BOSSES.length),
+      });
+    }
+    set({ arenaSpots: next });
+  },
+
+  enterArena: (bossIndex) => {
+    const i =
+      bossIndex != null && bossIndex >= 0 && bossIndex < BOSSES.length ? bossIndex : null;
+    set({ screen: "arena", arenaBoss: i, encounter: null, spinStopId: null });
+  },
+
+  leaveArena: () => set({ screen: "map", arenaBoss: null }),
+
   spawnTick: () => {
-    const { pokedex, pos, spawns, save, incenseUntil } = get();
-    if (!pokedex.length) return;
+    const { pos, spawns, save, incenseUntil } = get();
     const cap = incenseUntil > Date.now() ? MAX_SPAWNS + 8 : MAX_SPAWNS;
     if (spawns.length >= cap) return;
-    set({ spawns: [...spawns, makeSpawn(pokedex, pos, save.trainer.level)] });
+    set({ spawns: [...spawns, makeSpawn(pos, save.trainer.level)] });
   },
 
   cleanupTick: () => {
@@ -252,6 +332,7 @@ export const useGame = create<GameState>((set, get) => ({
         (s.expiresAt > now && distanceMeters(s.pos, pos) < DESPAWN_DISTANCE)
     );
     if (kept.length !== spawns.length) set({ spawns: kept });
+    get().ensureArenaSpots();
   },
 
   startEncounter: (s) => {
@@ -379,7 +460,7 @@ export const useGame = create<GameState>((set, get) => ({
   powerUp: (monId) => {
     const { save, pokedex } = get();
     const mon = save.caught.find((c) => c.id === monId);
-    const base = mon ? speciesOrWatchman(pokedex, mon.dex) : undefined;
+    const base = mon ? speciesOf(pokedex, mon.dex) : undefined;
     if (!mon || !base || mon.level >= 40) return;
     const cost = 200 + mon.level * 25;
     const candyHave = save.trainer.candy[mon.dex] || 0;
@@ -425,7 +506,7 @@ export const useGame = create<GameState>((set, get) => ({
     if (gained <= 0) return { levels: 0, points: 0 };
     const { save, pokedex } = get();
     const mon = save.caught.find((c) => c.id === monId);
-    const base = mon ? speciesOrWatchman(pokedex, mon.dex) : undefined;
+    const base = mon ? speciesOf(pokedex, mon.dex) : undefined;
     if (!mon) return { levels: 0, points: 0 };
     const prev = mon.trainingPoints ?? 0;
     const total = prev + gained;

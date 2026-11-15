@@ -1,4 +1,5 @@
 import type { Pokemon } from "./types";
+import { SMURF, SMURF_DEX } from "./smurf";
 
 /** Sentinel dex number so the watchman can be caught without colliding with real species. */
 export const WATCHMAN_DEX = 10001;
@@ -23,7 +24,10 @@ export function isWatchman(p: { dex: number } | null | undefined): boolean {
   return p?.dex === WATCHMAN_DEX;
 }
 
-/** Pokédex lookup that also resolves the Wooden Watchman, which is not in pokemon.json. */
+/** Pokédex lookup that also resolves the custom species (Watchman, Smurf) not in pokemon.json. */
 export function speciesOrWatchman(pool: Pokemon[], dex: number): Pokemon | undefined {
-  return pool.find((p) => p.dex === dex) ?? (dex === WATCHMAN_DEX ? WOODEN_WATCHMAN : undefined);
+  return (
+    pool.find((p) => p.dex === dex) ??
+    (dex === WATCHMAN_DEX ? WOODEN_WATCHMAN : dex === SMURF_DEX ? SMURF : undefined)
+  );
 }

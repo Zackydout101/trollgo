@@ -1,8 +1,8 @@
 {
-  "name": "pokemon-go-world",
+  "name": "skibidigo",
   "private": true,
   "version": "2.0.0",
-  "description": "A Pokémon GO style real-world 3D map game built with Next.js, MapLibre and three.js",
+  "description": "SkibidiGo — a real-world 3D map game built with Next.js, MapLibre and three.js",
   "scripts": {
     "postinstall": "node scripts/copy-maplibre-worker.mjs",
     "dev": "next dev -H 0.0.0.0",

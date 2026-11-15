@@ -1,6 +1,6 @@
-# Pokémon GO World
+# SkibidiGo
 
-A Pokémon GO–style game in the browser. Walk the real world on a tilted 3D map,
+SkibidiGo is a real-world catch game in the browser. Walk the real world on a tilted 3D map,
 find 3D Pokémon around you, and when you walk close to one you are taken into a
 3D catch environment where you swipe Poké Balls at it.
 
