@@ -311,9 +311,9 @@ export default function CatchScene(props: Props) {
         if (t > 0.7 && !s.fleeChecked) {
           s.fleeChecked = true;
           const fled = cb.current.onBreakOut();
+          s.fleeChecked = false;
           if (fled) setMode("flee");
           else {
-            s.fleeChecked = false;
             s.open = 0;
             s.spin.set(0, 0, 0);
             s.pos.copy(rest).y -= 0.5;
