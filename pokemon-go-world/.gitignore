@@ -1,0 +1,9 @@
+node_modules
+.next
+.cache
+public/vendor
+out
+next-env.d.ts
+*.tsbuildinfo
+*.local
+.DS_Store
