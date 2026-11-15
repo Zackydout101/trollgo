@@ -1,8 +1,12 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 const SOURCE = "https://raw.githubusercontent.com/Sudhanshu-Ambastha/Pokemon-3D-api/main/models/opt/regular";
-const CACHE_DIR = path.join(process.cwd(), ".cache", "models");
+// Vercel's deployment filesystem is read-only; only the OS temp dir is writable there.
+const CACHE_DIR = process.env.VERCEL
+  ? path.join(tmpdir(), "models")
+  : path.join(process.cwd(), ".cache", "models");
 
 const headers = {
   "Content-Type": "model/gltf-binary",
@@ -24,7 +28,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ dex: string }>
   const upstream = await fetch(`${SOURCE}/${dex}.glb`);
   if (!upstream.ok) return new Response("model not found", { status: upstream.status === 404 ? 404 : 502 });
   const buf = new Uint8Array(await upstream.arrayBuffer());
-  await mkdir(CACHE_DIR, { recursive: true });
-  await writeFile(file, buf).catch(() => {});
+  await mkdir(CACHE_DIR, { recursive: true })
+    .then(() => writeFile(file, buf))
+    .catch(() => {});
   return new Response(buf, { headers });
 }
